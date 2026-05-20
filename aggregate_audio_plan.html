@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aggregate EgoCom Audio Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d2733;
+      --muted: #53606f;
+      --line: #d8dee6;
+      --panel: #f7f9fb;
+      --accent: #1b6b7c;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.55;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 24px 56px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 10px;
+      font-size: 20px;
+      letter-spacing: 0;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 6px;
+    }
+    p {
+      margin: 8px 0 14px;
+    }
+    ul {
+      padding-left: 22px;
+    }
+    li {
+      margin: 6px 0;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    code {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    pre {
+      overflow-x: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 14px;
+    }
+    .lead {
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 760px;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 8px 14px;
+      margin: 22px 0 26px;
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .meta strong {
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Aggregate EgoCom Inference Audio</h1>
+    <p class="lead">
+      This document describes the implementation added in
+      <code>/home/prj/comp_utils/aggregate_audio.py</code> and
+      <code>/home/prj/comp_utils/aggregate_audio.sh</code>.
+    </p>
+
+    <div class="meta">
+      <strong>Manifest</strong>
+      <span><code>/home/prj/data/egocom_holdout/4s_overlap0_v2_day1_con4_parts/test/manifest/manifest_mm.jsonl</code></span>
+      <strong>Audio root</strong>
+      <span><code>/home/prj/ego2ego_mag/result/inference-geo-label/audio</code></span>
+      <strong>Output root</strong>
+      <span><code>/home/prj/ego2ego_mag/result/inference-geo-label/aggregated_audio</code></span>
+    </div>
+
+    <h2>Implementation</h2>
+    <ul>
+      <li>Read the JSONL manifest and preserve each row index.</li>
+      <li>Parse inference sample directories named like <code>sample_0000_day_1__con_4__part1</code>.</li>
+      <li>Map each sample number to a manifest row, with <code>sample_0000</code> mapping to row <code>0</code>.</li>
+      <li>Group mapped rows by <code>scene_name</code> and actual person perspective by default, producing 12 directories for this manifest.</li>
+      <li>Build <code>src_audio.wav</code> from rows where the person is <code>src_person</code>.</li>
+      <li>Build <code>tgt_audio.wav</code> and <code>pred_audio.wav</code> from rows where the person is <code>tgt_person</code>.</li>
+      <li>De-duplicate all three audio names by clip identity, keeping the earliest manifest row when multiple source persons predict the same target clip.</li>
+      <li>Optional legacy grouping remains available with <code>--group-by scene-src</code>, <code>--group-by scene-src-tgt</code>, or <code>--group-by scene</code>.</li>
+      <li>Sort each group by <code>clip_start_ms</code>, <code>clip_end_ms</code>, and manifest row index.</li>
+      <li>For every group, concatenate <code>pred_audio.wav</code>, <code>src_audio.wav</code>, and <code>tgt_audio.wav</code> separately.</li>
+      <li>Use ffmpeg's concat demuxer with stream copy, so compatible WAV segment data is not re-encoded.</li>
+      <li>Write <code>summary.json</code> with group metadata, output paths, skipped groups, and errors.</li>
+    </ul>
+
+    <h2>Timing Policy</h2>
+    <p>
+      The selected policy is strict concatenation. The script appends segments
+      in manifest time order and does not insert silence, trim overlaps, or
+      crossfade. This matches the current <code>4s_overlap0</code> manifest.
+    </p>
+
+    <h2>Output Layout</h2>
+    <p>Each scenario/source-person pair gets one output directory:</p>
+    <pre><code>aggregated_audio/
+  day_1__con_4__part1__person_1/
+    pred_audio.wav
+    src_audio.wav
+    tgt_audio.wav
+  summary.json</code></pre>
+
+    <h2>Usage</h2>
+    <pre><code>cd /home/prj/comp_utils
+./aggregate_audio.sh --dry-run
+./aggregate_audio.sh --overwrite
+./aggregate_audio.sh --group-by scene --output-root /path/to/aggregated_audio_scene_dedup --overwrite
+./aggregate_audio.sh --group-by scene-src-tgt --overwrite</code></pre>
+    <p>Override paths with environment variables or CLI flags:</p>
+    <pre><code>MANIFEST=/path/to/manifest.jsonl \
+AUDIO_ROOT=/path/to/inference/audio \
+OUTPUT_ROOT=/path/to/aggregated_audio \
+./aggregate_audio.sh --strict --overwrite</code></pre>
+
+    <h2>Validation</h2>
+    <ul>
+      <li><code>--dry-run</code> prints all planned groups and outputs without creating WAV files.</li>
+      <li><code>--strict</code> exits non-zero if any manifest row lacks a sample directory, any sample maps outside the manifest, or a group is missing audio files.</li>
+      <li>Without <code>--overwrite</code>, existing outputs are skipped.</li>
+      <li>Use <code>ffprobe</code> on generated WAV files to confirm codec, sample rate, channel count, and duration.</li>
+    </ul>
+  </main>
+</body>
+</html>
