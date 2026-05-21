@@ -9,17 +9,24 @@ LIMIT="${LIMIT:-}"
 ALSO_WRITE_LEGACY="${ALSO_WRITE_LEGACY:-0}"
 PESQ_MAX_SECONDS="${PESQ_MAX_SECONDS:-30}"
 
-# Update this list with output_root directories you want to evaluate.
+# Override this list at runtime with OUTPUT_ROOTS_OVERRIDE as a colon-separated
+# list of output_root directories.
+# Example:
+# OUTPUT_ROOTS_OVERRIDE="/path/to/run_a:/path/to/run_b" ./run_cal_metrics_batch.sh
+#
+# Or update this list with output_root directories you want to evaluate.
 # Example:
 # OUTPUT_ROOTS=(
 #   "/home/prj/ego-to-ego-audio-transfer/inference_result"
 #   "/home/prj/ego-to-ego-audio-transfer_fmodulate/inference_result"
 # )
-OUTPUT_ROOTS=(
-  /home/prj/ego2ego_mag/result/inference-geo-label
-  /home/prj/ego2ego_mag/result/inference-text
-  /home/prj/ego2ego_mag/result/inference-vision
-)
+if [[ -n "${OUTPUT_ROOTS_OVERRIDE:-}" ]]; then
+  IFS=':' read -r -a OUTPUT_ROOTS <<< "${OUTPUT_ROOTS_OVERRIDE}"
+else
+  OUTPUT_ROOTS=(
+    /home/prj/comparision_baselines_new/DAVIS/inference_result/egocom-vision-fm-10s
+  )
+fi
 
 SCRIPT_PATH="/home/prj/comp_utils/cal_metrics.py"
 

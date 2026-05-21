@@ -6,10 +6,10 @@ Inference audio directories are expected to be named like:
     sample_0000_day_1__con_4__part1/pred_audio.wav
 
 The sample number is interpreted as a manifest row index. Rows are grouped by
-``scene_name`` and person perspective by default; each output directory
-represents one real video/person timeline. Source audio is taken from rows
-where that person is the source, target audio from rows where that person is
-the target, and prediction audio from rows where that person is the target.
+``scene_name`` + ``src_person`` + ``tgt_person`` by default; each output
+directory represents one directed transfer pair such as
+``day_1__con_4__part1__person_1__person_3``. Source, target, and prediction
+audio are concatenated only from rows matching that exact transfer pair.
 Duplicate clips are de-duplicated by actual clip identity.
 """
 
@@ -44,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Concatenate per-sample pred/src/tgt WAV files into longer WAVs. "
-            "By default groups are scene_name + person perspective, producing "
-            "one directory per real video/person."
+            "By default groups are scene_name + src_person + tgt_person, "
+            "producing one directory per directed transfer pair."
         )
     )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -54,11 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--group-by",
         choices=("scene-person", "scene", "scene-src", "scene-src-tgt"),
-        default="scene-person",
+        default="scene-src-tgt",
         help=(
-            "Grouping key. scene-person produces one directory per real video/person. "
-            "scene-src-tgt keeps pair-level pred/tgt alignment. scene makes "
-            "one whole-scenario group."
+            "Grouping key. Default scene-src-tgt keeps directed source-target "
+            "transfer pairs separate, e.g. scene__person_1__person_3. "
+            "scene-person is the legacy per-person timeline grouping. scene "
+            "makes one whole-scenario group."
         ),
     )
     parser.add_argument(
@@ -80,6 +81,15 @@ def parse_args() -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         help="Overwrite existing aggregated WAV files.",
+    )
+    parser.add_argument(
+        "--clean-output-root",
+        action="store_true",
+        help=(
+            "Remove existing child directories under output-root before writing. "
+            "Use this when changing grouping modes so stale aggregate groups are "
+            "not included by downstream metric scripts."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -421,6 +431,24 @@ def summarize_person_group(
     }
 
 
+def clean_output_root(output_root: Path, dry_run: bool) -> list[str]:
+    if not output_root.exists():
+        return []
+
+    removed_dirs = []
+    for child in sorted(output_root.iterdir()):
+        if not child.is_dir():
+            continue
+        removed_dirs.append(str(child))
+        if not dry_run:
+            shutil.rmtree(child)
+
+    if removed_dirs:
+        action = "DRY-RUN would remove" if dry_run else "removed"
+        print(f"{action} {len(removed_dirs)} existing output dirs from {output_root}")
+    return removed_dirs
+
+
 def write_summary(output_root: Path, summary: dict, dry_run: bool) -> None:
     if dry_run:
         print(json.dumps(summary, indent=2))
@@ -487,6 +515,7 @@ def main() -> int:
         "sample_index_base": args.sample_index_base,
         "group_by": args.group_by,
         "dedupe_audio_names": sorted(dedupe_audio_names),
+        "clean_output_root": args.clean_output_root,
         "dry_run": args.dry_run,
         "strict": args.strict,
         "timing_policy": "strict_concat",
@@ -495,10 +524,14 @@ def main() -> int:
         "num_groups": num_groups,
         "missing_manifest_indices": missing_manifest_indices,
         "out_of_range_samples": out_of_range_samples,
+        "cleaned_output_dirs": [],
         "groups": [],
         "skipped_groups": [],
         "errors": [],
     }
+
+    if args.clean_output_root:
+        summary["cleaned_output_dirs"] = clean_output_root(args.output_root, args.dry_run)
 
     had_error = False
     if args.group_by == "scene-person":

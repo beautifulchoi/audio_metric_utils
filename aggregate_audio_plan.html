@@ -3,16 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aggregate EgoCom Audio Plan</title>
+  <title>Pair-Level EgoCom Audio Aggregation Plan</title>
   <style>
     :root {
       color-scheme: light;
-      --ink: #1d2733;
-      --muted: #53606f;
-      --line: #d8dee6;
+      --ink: #17212b;
+      --muted: #5b6673;
+      --line: #d7dde5;
       --panel: #f7f9fb;
-      --accent: #1b6b7c;
+      --nav: #0f2f3a;
+      --critical-bg: #fde8e8;
+      --critical-fg: #9b1c1c;
+      --high-bg: #fff1d6;
+      --high-fg: #8a4b00;
+      --medium-bg: #e8f1ff;
+      --medium-fg: #1f4f91;
+      --low-bg: #e8f7ef;
+      --low-fg: #276749;
     }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -20,36 +30,45 @@
       background: #ffffff;
       line-height: 1.55;
     }
-    main {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 40px 24px 56px;
+    header {
+      background: var(--nav);
+      color: #ffffff;
+      padding: 28px 24px 24px;
     }
-    h1 {
-      margin: 0 0 10px;
-      font-size: 32px;
-      line-height: 1.2;
-      letter-spacing: 0;
-    }
-    h2 {
-      margin: 34px 0 10px;
-      font-size: 20px;
-      letter-spacing: 0;
+    header .wrap, main { max-width: 1080px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 32px; line-height: 1.15; letter-spacing: 0; }
+    h2 { margin: 34px 0 12px; font-size: 22px; letter-spacing: 0; }
+    h3 { margin: 22px 0 8px; font-size: 17px; letter-spacing: 0; }
+    p { margin: 8px 0 14px; }
+    a { color: #0b6880; }
+    header a { color: #ffffff; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #ffffff;
       border-bottom: 1px solid var(--line);
-      padding-bottom: 6px;
     }
-    p {
-      margin: 8px 0 14px;
+    nav .wrap {
+      max-width: 1080px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 24px;
     }
-    ul {
-      padding-left: 22px;
+    nav a {
+      text-decoration: none;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 6px 10px;
+      background: var(--panel);
+      font-size: 14px;
     }
-    li {
-      margin: 6px 0;
-    }
-    code, pre {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    }
+    main { padding: 28px 24px 52px; }
+    section { scroll-margin-top: 68px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
     code {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -58,100 +77,186 @@
     }
     pre {
       overflow-x: auto;
-      background: var(--panel);
-      border: 1px solid var(--line);
+      background: #101820;
+      color: #f4f7fa;
       border-radius: 6px;
       padding: 14px;
+      line-height: 1.45;
     }
-    .lead {
-      color: var(--muted);
-      font-size: 16px;
-      max-width: 760px;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      font-size: 14px;
     }
-    .meta {
-      display: grid;
-      grid-template-columns: 150px 1fr;
-      gap: 8px 14px;
-      margin: 22px 0 26px;
-      padding: 16px;
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: var(--panel); }
+    ul, ol { padding-left: 22px; }
+    li { margin: 6px 0; }
+    .lead { max-width: 780px; color: #d8eef4; font-size: 16px; }
+    .card {
+      border: 1px solid var(--line);
       background: var(--panel);
+      border-radius: 6px;
+      padding: 16px;
+      margin: 14px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 12px;
+    }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+    .critical { background: var(--critical-bg); color: var(--critical-fg); }
+    .high { background: var(--high-bg); color: var(--high-fg); }
+    .medium { background: var(--medium-bg); color: var(--medium-fg); }
+    .low { background: var(--low-bg); color: var(--low-fg); }
+    .timeline {
+      list-style: none;
+      padding: 0;
+      border-left: 3px solid #1b6b7c;
+      margin-left: 8px;
+    }
+    .timeline li {
+      position: relative;
+      margin: 0 0 16px 18px;
+      padding: 10px 12px;
       border: 1px solid var(--line);
       border-radius: 6px;
+      background: #ffffff;
     }
-    .meta strong {
-      color: var(--accent);
+    .timeline li::before {
+      content: "";
+      position: absolute;
+      left: -28px;
+      top: 16px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #1b6b7c;
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 0 1px #1b6b7c;
+    }
+    .status {
+      display: inline-block;
+      color: #31404f;
+      background: #eef2f6;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 12px;
+      font-weight: 700;
     }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Aggregate EgoCom Inference Audio</h1>
-    <p class="lead">
-      This document describes the implementation added in
-      <code>/home/prj/comp_utils/aggregate_audio.py</code> and
-      <code>/home/prj/comp_utils/aggregate_audio.sh</code>.
-    </p>
-
-    <div class="meta">
-      <strong>Manifest</strong>
-      <span><code>/home/prj/data/egocom_holdout/4s_overlap0_v2_day1_con4_parts/test/manifest/manifest_mm.jsonl</code></span>
-      <strong>Audio root</strong>
-      <span><code>/home/prj/ego2ego_mag/result/inference-geo-label/audio</code></span>
-      <strong>Output root</strong>
-      <span><code>/home/prj/ego2ego_mag/result/inference-geo-label/aggregated_audio</code></span>
+  <header>
+    <div class="wrap">
+      <h1>Pair-Level EgoCom Audio Aggregation Plan</h1>
+      <p class="lead">Fix aggregation so each scene keeps directed transfer pairs separate, such as <code>person_1-&gt;person_3</code> and <code>person_2-&gt;person_3</code>, producing 24 aggregate outputs for the 10s holdout manifest.</p>
     </div>
+  </header>
+  <nav aria-label="Jump links">
+    <div class="wrap">
+      <a href="#summary">Summary</a>
+      <a href="#diagnosis">Diagnosis</a>
+      <a href="#implementation">Implementation</a>
+      <a href="#timeline">Timeline</a>
+      <a href="#risks">Risk Table</a>
+      <a href="#validation">Validation</a>
+    </div>
+  </nav>
+  <main>
+    <section id="summary">
+      <h2>Summary</h2>
+      <div class="grid">
+        <div class="card"><strong>Correct grouping</strong><br><code>scene_name + src_person + tgt_person</code></div>
+        <div class="card"><strong>Expected count</strong><br>4 scenes x 6 directed pairs = 24 aggregate directories</div>
+        <div class="card"><strong>Output naming</strong><br><code>day_1__con_4__part1__person_1__person_3</code></div>
+      </div>
+      <p>The previous default grouped by target/source person timeline and merged predictions from different source people into one target-person output. The corrected default keeps each directed transfer pair independent.</p>
+    </section>
 
-    <h2>Implementation</h2>
-    <ul>
-      <li>Read the JSONL manifest and preserve each row index.</li>
-      <li>Parse inference sample directories named like <code>sample_0000_day_1__con_4__part1</code>.</li>
-      <li>Map each sample number to a manifest row, with <code>sample_0000</code> mapping to row <code>0</code>.</li>
-      <li>Group mapped rows by <code>scene_name</code> and actual person perspective by default, producing 12 directories for this manifest.</li>
-      <li>Build <code>src_audio.wav</code> from rows where the person is <code>src_person</code>.</li>
-      <li>Build <code>tgt_audio.wav</code> and <code>pred_audio.wav</code> from rows where the person is <code>tgt_person</code>.</li>
-      <li>De-duplicate all three audio names by clip identity, keeping the earliest manifest row when multiple source persons predict the same target clip.</li>
-      <li>Optional legacy grouping remains available with <code>--group-by scene-src</code>, <code>--group-by scene-src-tgt</code>, or <code>--group-by scene</code>.</li>
-      <li>Sort each group by <code>clip_start_ms</code>, <code>clip_end_ms</code>, and manifest row index.</li>
-      <li>For every group, concatenate <code>pred_audio.wav</code>, <code>src_audio.wav</code>, and <code>tgt_audio.wav</code> separately.</li>
-      <li>Use ffmpeg's concat demuxer with stream copy, so compatible WAV segment data is not re-encoded.</li>
-      <li>Write <code>summary.json</code> with group metadata, output paths, skipped groups, and errors.</li>
-    </ul>
+    <section id="diagnosis">
+      <h2>Diagnosis</h2>
+      <p><span class="badge high">High</span>The old default <code>scene-person</code> created only 12 aggregate outputs because each target person was represented once per scene.</p>
+      <p><span class="badge medium">Medium</span>The code already had a pair-level mode named <code>scene-src-tgt</code>, and a dry run against the 10s manifest produced 24 groups. The main defect was the default behavior and stale output handling.</p>
+      <pre>10s manifest rows: 487
+Pair-level groups: 24
+Per scene: 6 directed pairs
+Example target person_3 outputs:
+  day_1__con_4__part1__person_1__person_3
+  day_1__con_4__part1__person_2__person_3</pre>
+    </section>
 
-    <h2>Timing Policy</h2>
-    <p>
-      The selected policy is strict concatenation. The script appends segments
-      in manifest time order and does not insert silence, trim overlaps, or
-      crossfade. This matches the current <code>4s_overlap0</code> manifest.
-    </p>
+    <section id="implementation">
+      <h2>Implementation</h2>
+      <ul>
+        <li>Change the default <code>--group-by</code> value in <code>aggregate_audio.py</code> to <code>scene-src-tgt</code>.</li>
+        <li>Update the module docstring and CLI help to describe directed source-target pair aggregation.</li>
+        <li>Keep <code>scene-person</code> as an explicit legacy option for old workflows.</li>
+        <li>Add <code>--clean-output-root</code> to remove existing child directories from <code>aggregated_audio</code> before regeneration.</li>
+        <li>Record <code>clean_output_root</code> and <code>cleaned_output_dirs</code> in <code>summary.json</code> for auditability.</li>
+      </ul>
+    </section>
 
-    <h2>Output Layout</h2>
-    <p>Each scenario/source-person pair gets one output directory:</p>
-    <pre><code>aggregated_audio/
-  day_1__con_4__part1__person_1/
-    pred_audio.wav
-    src_audio.wav
-    tgt_audio.wav
-  summary.json</code></pre>
+    <section id="timeline">
+      <h2>Timeline</h2>
+      <ol class="timeline">
+        <li><span class="status">Done</span> Inspect manifest distribution and confirm the expected 24 directed pairs.</li>
+        <li><span class="status">Done</span> Update aggregation default, CLI help, and cleanup behavior.</li>
+        <li><span class="status">Done</span> Write this self-contained HTML plan artifact.</li>
+        <li><span class="status">Done</span> Run Python syntax validation and pair-level dry run.</li>
+        <li><span class="status">Done</span> Regenerate <code>geo-label</code>, <code>text</code>, and <code>vision</code> with clean output roots.</li>
+        <li><span class="status">Done</span> Rerun metric calculation and verify 24 aggregated metric rows per root.</li>
+      </ol>
+    </section>
 
-    <h2>Usage</h2>
-    <pre><code>cd /home/prj/comp_utils
-./aggregate_audio.sh --dry-run
-./aggregate_audio.sh --overwrite
-./aggregate_audio.sh --group-by scene --output-root /path/to/aggregated_audio_scene_dedup --overwrite
-./aggregate_audio.sh --group-by scene-src-tgt --overwrite</code></pre>
-    <p>Override paths with environment variables or CLI flags:</p>
-    <pre><code>MANIFEST=/path/to/manifest.jsonl \
-AUDIO_ROOT=/path/to/inference/audio \
-OUTPUT_ROOT=/path/to/aggregated_audio \
-./aggregate_audio.sh --strict --overwrite</code></pre>
+    <section id="risks">
+      <h2>Risk Table</h2>
+      <table>
+        <thead>
+          <tr><th>Severity</th><th>Risk</th><th>Mitigation</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="badge critical">Critical</span></td><td>Stale 12-group aggregate directories remain and metric scripts evaluate too many directories.</td><td>Run aggregation with <code>--clean-output-root</code>; verify exactly 24 child directories.</td></tr>
+          <tr><td><span class="badge high">High</span></td><td>Predictions from different source people are merged for the same target person.</td><td>Default to <code>scene-src-tgt</code> so rows are grouped by exact directed pair.</td></tr>
+          <tr><td><span class="badge medium">Medium</span></td><td>Legacy users may expect per-person timeline aggregation.</td><td>Preserve <code>--group-by scene-person</code> as an explicit option.</td></tr>
+          <tr><td><span class="badge low">Low</span></td><td>Dry-run output is verbose for 24 groups.</td><td>Keep verbose output because it exposes row counts, output names, and missing audio before writing files.</td></tr>
+        </tbody>
+      </table>
+    </section>
 
-    <h2>Validation</h2>
-    <ul>
-      <li><code>--dry-run</code> prints all planned groups and outputs without creating WAV files.</li>
-      <li><code>--strict</code> exits non-zero if any manifest row lacks a sample directory, any sample maps outside the manifest, or a group is missing audio files.</li>
-      <li>Without <code>--overwrite</code>, existing outputs are skipped.</li>
-      <li>Use <code>ffprobe</code> on generated WAV files to confirm codec, sample rate, channel count, and duration.</li>
-    </ul>
+    <section id="validation">
+      <h2>Validation</h2>
+      <h3>Syntax</h3>
+      <pre>python3 -m py_compile /home/prj/comp_utils/aggregate_audio.py</pre>
+      <h3>Dry run</h3>
+      <pre>MANIFEST=/home/prj/data/egocom_holdout/10s_overlap0_v2_day1_con4_parts/test/manifest/manifest_mm.jsonl \
+AUDIO_ROOT=/home/prj/ego2ego_mag/result_10s/infer_results_10s/geo-label/audio \
+OUTPUT_ROOT=/tmp/aggregate_pair_dry_run \
+/home/prj/comp_utils/aggregate_audio.sh --dry-run</pre>
+      <h3>Acceptance Criteria</h3>
+      <ul>
+        <li>Dry-run summary reports <code>group_by: scene-src-tgt</code>.</li>
+        <li>Dry-run summary reports <code>num_groups: 24</code>, no missing manifest indices, and no errors.</li>
+        <li>After regeneration, each target root has 24 direct child directories under <code>aggregated_audio</code>.</li>
+        <li>After metrics, each <code>metrics_aggregated.csv</code> has 25 lines: one header plus 24 pair rows.</li>
+      </ul>
+    </section>
   </main>
 </body>
 </html>
