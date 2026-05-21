@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Create EgoCom source/target/prediction videos with animated audio plots.
+"""Create EgoCom source/target/prediction videos for inference samples.
 
-Predicted audio directories are expected to be named like:
+New inference folders are expected to contain a summary.json with samples like:
 
-    sample_0155_day_1__con_4__part1/pred_audio.wav
+    {
+      "sample_dir": ".../audio/step00040000_sample000_day_1__con_4__part1",
+      "src_video_path": ".../test/video/...mp4",
+      "tgt_video_path": ".../test/video/...mp4",
+      "pred_audio_path": ".../pred_audio.wav"
+    }
 
-The sample number is interpreted as a 0-based row index into the manifest
-JSONL. For each selected sample this script writes source, target, and/or pred
-media by placing the original camera clip beside a moving waveform,
-spectrogram, and label plot. Prediction media uses the target video and
-predicted audio.
-
-Only prediction directories that contain the requested audio filename are
-processed, so holdout/missing predictions are skipped naturally.
+The summary is the primary source of truth. Legacy JSONL/sample-index mapping is
+kept as a fallback for older inference outputs.
 """
 
 from __future__ import annotations
@@ -32,23 +31,24 @@ import soundfile as sf
 import torch
 
 
-DEFAULT_INFER_ROOT = Path("/home/prj/ego2ego_only_mag/inference_result/geocue_True")
-DEFAULT_VIDEO_ROOT = Path(
-    "/home/prj/data/egocom/480p/5min_parts_10s_stride5_exact10"
+DEFAULT_INFER_ROOT = Path(
+    "/home/prj/ego2ego_complex/result/egocom-metadata-geodata-src/visualization/validation_step_00040000"
 )
+DEFAULT_DATA_ROOT = Path(
+    "/home/prj/data/egocom_holdout/4s_overlap0_v2_day1_con4_parts/test"
+)
+DEFAULT_VIDEO_ROOT = DEFAULT_DATA_ROOT / "video"
 DEFAULT_AUDIO_ROOT = None
-DEFAULT_MANIFEST = Path(
-    "/home/prj/ego2ego_only_mag/manifests/egocom_test_pairs_geocue_target_exact10.jsonl"
-)
+DEFAULT_MANIFEST = None
 DEFAULT_SPEAKER_LABELS_JSON = Path(
     "/home/prj/data/EgoCom-Dataset/egocom_dataset/speaker_labels/rev_ground_truth_speaker_labels.json"
 )
 DEFAULT_OUTPUT_ROOT = None
-DEFAULT_VIDEO_SCALE = "1280:-2"
+DEFAULT_VIDEO_SCALE = None
 DEFAULT_OUTPUT_EXT = ".mp4"
 LABEL_BIN_MS = 500
 
-SAMPLE_DIR_RE = re.compile(r"^sample_(\d+)_")
+SAMPLE_DIR_RE = re.compile(r"(?:^|_)sample_?(\d+)(?:_|$)")
 VIDEO_SUFFIXES = (".MP4", ".mp4", ".MOV", ".mov", ".mkv", ".avi")
 AUDIO_NAMES = {
     "source": ("src_audio.wav", "*_src_audio.wav"),
@@ -60,8 +60,9 @@ AUDIO_NAMES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Create EgoCom source/target/prediction videos with animated "
-            "waveform, spectrogram, and label plots."
+            "Create EgoCom source/target/prediction videos from an inference "
+            "summary.json. Legacy JSONL/sample-index outputs are supported "
+            "as a fallback."
         )
     )
     parser.add_argument(
@@ -77,15 +78,36 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Plot root. Defaults to <infer-root>/plots.",
     )
-    parser.add_argument("--video-root", type=Path, default=DEFAULT_VIDEO_ROOT)
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument(
+        "--summary",
+        type=Path,
+        default=None,
+        help="Inference summary JSON. Defaults to <infer-root>/summary.json.",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DATA_ROOT,
+        help="Dataset split root containing video/, audio/, and manifest/.",
+    )
+    parser.add_argument(
+        "--video-root",
+        type=Path,
+        default=None,
+        help="Video root. Defaults to <data-root>/video.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_MANIFEST,
+        help="Legacy JSONL manifest fallback when summary.json is unavailable.",
+    )
     parser.add_argument(
         "--output-root",
         type=Path,
         default=DEFAULT_OUTPUT_ROOT,
         help=(
-            "Output root. Defaults to <infer-root>/pred_media, for example "
-            "/home/prj/ego2ego_only_mag/inference_result/geocue_True/pred_media."
+            "Output root. Defaults to <infer-root>/pred_media."
         ),
     )
     parser.add_argument(
@@ -112,12 +134,19 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--make-gt-origianl",
+        "--make-gt-original",
+        dest="make_gt_original",
         action="store_true",
         help=(
             "Also copy source and target ground-truth MP4s. The original "
             "audio tracks are preserved."
         ),
+    )
+    parser.add_argument(
+        "--make-gt-origianl",
+        dest="make_gt_original",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--sample-index-base",
@@ -145,24 +174,24 @@ def parse_args() -> argparse.Namespace:
         "--video-scale",
         default=DEFAULT_VIDEO_SCALE,
         help=(
-            "ffmpeg scale size for the camera and plot panels, for example "
-            "1280:-2 or 1280x960. Composite output is always re-encoded."
+            "Optional ffmpeg scale size for pred media, for example 1280:-2 "
+            "or 1280x960. Defaults to copying the original video stream."
         ),
     )
     parser.add_argument(
         "--video-codec",
         default="libx264",
-        help="ffmpeg video codec when --video-scale is enabled.",
+        help="ffmpeg video codec when --video-scale requests re-encoding.",
     )
     parser.add_argument(
         "--video-crf",
         default="18",
-        help="x264/x265 CRF when --video-scale is enabled.",
+        help="x264/x265 CRF when --video-scale requests re-encoding.",
     )
     parser.add_argument(
         "--video-preset",
         default="medium",
-        help="ffmpeg video preset when --video-scale is enabled.",
+        help="ffmpeg video preset when --video-scale requests re-encoding.",
     )
     parser.add_argument(
         "--speaker-labels-json",
@@ -258,6 +287,164 @@ def load_manifest(path: Path) -> list[dict]:
     return rows
 
 
+def load_summary(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as handle:
+        summary = json.load(handle)
+    if not isinstance(summary, dict):
+        raise ValueError(f"Expected summary JSON object: {path}")
+    samples = summary.get("samples")
+    if not isinstance(samples, list):
+        raise ValueError(f"Expected summary['samples'] list: {path}")
+    return summary
+
+
+def resolve_optional_path(value: str | Path | None, base: Path | None = None) -> Path | None:
+    if value is None or value == "":
+        return None
+    path = Path(value)
+    if not path.is_absolute() and base is not None:
+        path = base / path
+    return path
+
+
+def existing_or_none(path: Path | None) -> Path | None:
+    if path is not None and path.is_file():
+        return path
+    return None
+
+
+def sample_dir_from_summary(row: dict, audio_root: Path) -> Path | None:
+    sample_dir = resolve_optional_path(row.get("sample_dir"))
+    if sample_dir is not None:
+        if sample_dir.is_dir():
+            return sample_dir
+        candidate = audio_root / sample_dir.name
+        if candidate.is_dir():
+            return candidate
+
+    for key in ("pred_audio_path", "src_audio_path", "tgt_audio_path"):
+        audio_path = resolve_optional_path(row.get(key))
+        if audio_path is not None:
+            if audio_path.is_file():
+                return audio_path.parent
+            candidate = audio_root / audio_path.parent.name
+            if candidate.is_dir():
+                return candidate
+    return sample_dir
+
+
+def summary_audio_path(
+    row: dict,
+    sample_dir: Path,
+    media_kind: str,
+    pred_audio_name: str,
+) -> Path | None:
+    path_key = {
+        "source": "src_audio_path",
+        "target": "tgt_audio_path",
+        "pred": "pred_audio_path",
+    }[media_kind]
+    direct = existing_or_none(resolve_optional_path(row.get(path_key)))
+    if direct is not None:
+        return direct
+    return find_audio_path(sample_dir, media_kind, pred_audio_name)
+
+
+def summary_video_path(args: argparse.Namespace, row: dict, media_kind: str) -> Path | None:
+    if media_kind not in {"source", "target"}:
+        raise ValueError(f"Unsupported video media kind: {media_kind}")
+
+    prefix = "src" if media_kind == "source" else "tgt"
+    direct = existing_or_none(resolve_optional_path(row.get(f"{prefix}_video_path")))
+    if direct is not None:
+        return direct
+
+    video_name = row.get(f"{prefix}_video_name")
+    clip_filename = row.get(f"{prefix}_video_filename") or row.get(f"{prefix}_clip_filename")
+    if not video_name or not clip_filename:
+        return None
+    return find_video_path(args.video_root, str(video_name), str(clip_filename))
+
+
+def expected_video_path(args: argparse.Namespace, row: dict, media_kind: str) -> Path:
+    prefix = "src" if media_kind == "source" else "tgt"
+    video_name = row.get(f"{prefix}_video_name", "<missing-video-name>")
+    clip_filename = row.get(f"{prefix}_video_filename") or row.get(
+        f"{prefix}_clip_filename", "<missing-clip>"
+    )
+    return args.video_root / str(video_name) / Path(str(clip_filename)).with_suffix(".mp4").name
+
+
+def iter_summary_samples(
+    summary_path: Path,
+    audio_root: Path,
+    audio_name: str,
+) -> Iterable[tuple[dict, Path, Path]]:
+    summary = load_summary(summary_path)
+    for row in summary["samples"]:
+        if not isinstance(row, dict):
+            continue
+        sample_dir = sample_dir_from_summary(row, audio_root)
+        if sample_dir is None:
+            continue
+        pred_audio_path = summary_audio_path(row, sample_dir, "pred", audio_name)
+        if pred_audio_path is None:
+            continue
+        yield row, sample_dir, pred_audio_path
+
+
+def iter_legacy_manifest_samples(
+    manifest_path: Path,
+    audio_root: Path,
+    audio_name: str,
+    sample_index_base: int,
+    strict: bool,
+) -> Iterable[tuple[dict | None, Path, Path]]:
+    rows = load_manifest(manifest_path)
+    for sample_index, sample_dir, audio_path in iter_prediction_dirs(audio_root, audio_name):
+        manifest_index = sample_index - sample_index_base
+        if manifest_index < 0 or manifest_index >= len(rows):
+            print(
+                f"SKIP no manifest row for {sample_dir.name} "
+                f"(computed index {manifest_index})",
+                file=sys.stderr,
+            )
+            if strict:
+                yield None, sample_dir, audio_path
+            continue
+        yield rows[manifest_index], sample_dir, audio_path
+
+
+def iter_media_samples(
+    args: argparse.Namespace,
+    audio_root: Path,
+) -> Iterable[tuple[dict | None, Path, Path]]:
+    summary_path = args.summary or args.infer_root / "summary.json"
+    if summary_path.is_file():
+        yield from iter_summary_samples(summary_path, audio_root, args.audio_name)
+        return
+
+    if args.manifest is not None and args.manifest.is_file():
+        print(
+            f"WARN summary not found, using legacy manifest: {summary_path}",
+            file=sys.stderr,
+        )
+        yield from iter_legacy_manifest_samples(
+            args.manifest,
+            audio_root,
+            args.audio_name,
+            args.sample_index_base,
+            args.strict,
+        )
+        return
+
+    if args.manifest is None:
+        raise FileNotFoundError(f"Summary does not exist: {summary_path}")
+    raise FileNotFoundError(
+        f"Neither summary nor legacy manifest exists: {summary_path}, {args.manifest}"
+    )
+
+
 def iter_prediction_dirs(audio_root: Path, audio_name: str) -> Iterable[tuple[int, Path, Path]]:
     for sample_dir in sorted(audio_root.iterdir()):
         if not sample_dir.is_dir():
@@ -286,8 +473,10 @@ def normalize_video_scale(video_scale: str | None) -> str | None:
     if video_scale is None:
         return DEFAULT_VIDEO_SCALE
     video_scale = video_scale.strip()
-    if not video_scale or video_scale.lower() in {"none", "copy", "original"}:
+    if not video_scale:
         return DEFAULT_VIDEO_SCALE
+    if video_scale.lower() in {"none", "copy", "original"}:
+        return None
     if "x" in video_scale and ":" not in video_scale:
         video_scale = video_scale.replace("x", ":", 1)
     return video_scale
@@ -462,6 +651,26 @@ def mux_media(
     if result.returncode != 0:
         print(f"ERROR ffmpeg failed for {media_kind}: {output_path}", file=sys.stderr)
         return False, True
+    return True, False
+
+
+def copy_original_media(
+    *,
+    args: argparse.Namespace,
+    media_kind: str,
+    video_path: Path,
+    output_path: Path,
+) -> tuple[bool, bool]:
+    if output_path.exists() and not args.overwrite:
+        print(f"SKIP exists: {output_path}", file=sys.stderr)
+        return False, False
+
+    print(f"{media_kind}: {video_path} -> {output_path}")
+    if args.dry_run:
+        return True, False
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(video_path, output_path)
     return True, False
 
 
@@ -914,20 +1123,22 @@ def main() -> int:
     if not args.ext.startswith("."):
         args.ext = f".{args.ext}"
 
+    if args.video_root is None:
+        args.video_root = args.data_root / "video"
+
     audio_root, plot_root, output_root = resolve_roots(args)
     if not audio_root.is_dir():
         raise FileNotFoundError(f"Audio root does not exist: {audio_root}")
     if not plot_root.is_dir():
         print(
-            f"WARN plot root does not exist; generating animated plots from audio: {plot_root}",
+            f"WARN plot root does not exist; generated pred media will not use plots: {plot_root}",
             file=sys.stderr,
         )
 
-    rows = load_manifest(args.manifest)
     speaker_labels = load_speaker_labels(args.speaker_labels_json)
 
     make_pred = args.media_kind in ("all", "pred")
-    make_gt_original = args.make_gt_origianl or args.media_kind == "all"
+    make_gt_original = args.make_gt_original or args.media_kind == "all"
     make_source = make_gt_original or args.media_kind == "source"
     make_target = make_gt_original or args.media_kind == "target"
 
@@ -935,47 +1146,24 @@ def main() -> int:
     skipped = 0
     failed = 0
 
-    for sample_index, sample_dir, audio_path in iter_prediction_dirs(
-        audio_root, args.audio_name
-    ):
-        manifest_index = sample_index - args.sample_index_base
-        if manifest_index < 0 or manifest_index >= len(rows):
-            print(
-                f"SKIP no manifest row for {sample_dir.name} "
-                f"(computed index {manifest_index})",
-                file=sys.stderr,
-            )
+    for row, sample_dir, pred_audio_path in iter_media_samples(args, audio_root):
+        if row is None:
             skipped += 1
+            failed += int(args.strict)
             if args.strict:
-                failed += 1
+                break
             continue
 
-        row = rows[manifest_index]
         outputs_done = 0
         sample_failed = False
 
-        src_audio_path = find_audio_path(sample_dir, "source", args.audio_name)
-        tgt_audio_path = find_audio_path(sample_dir, "target", args.audio_name)
-        if make_source and src_audio_path is None:
-            print(f"SKIP missing source audio for {sample_dir.name}", file=sys.stderr)
-            skipped += 1
-            sample_failed = args.strict
-        if (make_target or make_pred) and tgt_audio_path is None:
-            print(f"SKIP missing target audio for {sample_dir.name}", file=sys.stderr)
-            skipped += 1
-            sample_failed = args.strict
-
         tgt_video_path = None
         if make_pred or make_target:
-            tgt_video_path = find_video_path(
-                args.video_root,
-                row["tgt_video_name"],
-                row["tgt_clip_filename"],
-            )
+            tgt_video_path = summary_video_path(args, row, "target")
             if tgt_video_path is None:
                 print(
                     f"SKIP missing target video for {sample_dir.name}: "
-                    f"{args.video_root / row['tgt_video_name'] / Path(row['tgt_clip_filename']).with_suffix('.MP4').name}",
+                    f"{expected_video_path(args, row, 'target')}",
                     file=sys.stderr,
                 )
                 skipped += 1
@@ -983,27 +1171,22 @@ def main() -> int:
 
         src_video_path = None
         if make_source:
-            src_video_path = find_video_path(
-                args.video_root,
-                row["src_video_name"],
-                row["src_clip_filename"],
-            )
+            src_video_path = summary_video_path(args, row, "source")
             if src_video_path is None:
                 print(
                     f"SKIP missing source video for {sample_dir.name}: "
-                    f"{args.video_root / row['src_video_name'] / Path(row['src_clip_filename']).with_suffix('.MP4').name}",
+                    f"{expected_video_path(args, row, 'source')}",
                     file=sys.stderr,
                 )
                 skipped += 1
                 sample_failed = args.strict
 
         if make_pred and tgt_video_path is not None:
-            ok, did_fail = make_composite_media(
+            ok, did_fail = mux_media(
                 args=args,
                 media_kind="pred",
-                row=row,
-                camera_video_path=tgt_video_path,
-                plot_audio_path=audio_path,
+                video_path=tgt_video_path,
+                audio_path=pred_audio_path,
                 output_path=media_output_path(
                     output_root,
                     "pred",
@@ -1012,20 +1195,17 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
-                speaker_labels=speaker_labels,
-                pred_audio_path=audio_path,
+                audio_flipped=args.audio_flipped,
             )
             outputs_done += int(ok)
             failed += int(did_fail)
             sample_failed = sample_failed or did_fail
 
-        if make_target and tgt_video_path is not None and tgt_audio_path is not None:
-            ok, did_fail = make_composite_media(
+        if make_target and tgt_video_path is not None:
+            ok, did_fail = copy_original_media(
                 args=args,
                 media_kind="target",
-                row=row,
-                camera_video_path=tgt_video_path,
-                plot_audio_path=tgt_audio_path,
+                video_path=tgt_video_path,
                 output_path=media_output_path(
                     output_root,
                     "target",
@@ -1034,20 +1214,16 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
-                speaker_labels=speaker_labels,
-                pred_audio_path=None,
             )
             outputs_done += int(ok)
             failed += int(did_fail)
             sample_failed = sample_failed or did_fail
 
-        if make_source and src_video_path is not None and src_audio_path is not None:
-            ok, did_fail = make_composite_media(
+        if make_source and src_video_path is not None:
+            ok, did_fail = copy_original_media(
                 args=args,
                 media_kind="source",
-                row=row,
-                camera_video_path=src_video_path,
-                plot_audio_path=src_audio_path,
+                video_path=src_video_path,
                 output_path=media_output_path(
                     output_root,
                     "source",
@@ -1056,8 +1232,6 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
-                speaker_labels=speaker_labels,
-                pred_audio_path=None,
             )
             outputs_done += int(ok)
             failed += int(did_fail)
