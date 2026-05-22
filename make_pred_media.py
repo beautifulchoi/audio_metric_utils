@@ -40,8 +40,19 @@ DEFAULT_DATA_ROOT = Path(
 DEFAULT_VIDEO_ROOT = DEFAULT_DATA_ROOT / "video"
 DEFAULT_AUDIO_ROOT = None
 DEFAULT_MANIFEST = None
-DEFAULT_SPEAKER_LABELS_JSON = Path(
-    "/home/prj/data/EgoCom-Dataset/egocom_dataset/speaker_labels/rev_ground_truth_speaker_labels.json"
+DEFAULT_SPEAKER_LABEL_CANDIDATES = (
+    Path(
+        "/home/prj/data/egocom/EgoCom-Dataset/egocom_dataset/speaker_labels/"
+        "rev_ground_truth_speaker_labels.json"
+    ),
+    Path(
+        "/home/prj/data/EgoCom-Dataset/egocom_dataset/speaker_labels/"
+        "rev_ground_truth_speaker_labels.json"
+    ),
+)
+DEFAULT_SPEAKER_LABELS_JSON = next(
+    (path for path in DEFAULT_SPEAKER_LABEL_CANDIDATES if path.is_file()),
+    DEFAULT_SPEAKER_LABEL_CANDIDATES[0],
 )
 DEFAULT_OUTPUT_ROOT = None
 DEFAULT_VIDEO_SCALE = "1280:-2"
@@ -196,15 +207,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--speaker-labels-json",
         type=Path,
-        default=(
-            DEFAULT_SPEAKER_LABELS_JSON
-            if DEFAULT_SPEAKER_LABELS_JSON.is_file()
-            else None
-        ),
+        default=DEFAULT_SPEAKER_LABELS_JSON,
         help=(
-            "Optional EgoCom speaker-label JSON. When omitted, the label "
-            "subplot is rendered as silence. Defaults to the canonical "
-            "EgoCom label JSON when it exists."
+            "EgoCom speaker-label JSON used for the label-cue subplot. "
+            "Defaults to the canonical project-local label JSON. Pass an "
+            "empty string to render the label subplot as silence."
         ),
     )
     parser.add_argument(
@@ -718,13 +725,17 @@ def resolve_roots(args: argparse.Namespace) -> tuple[Path, Path, Path]:
     return audio_root, plot_root, output_root
 
 
-def load_speaker_labels(path: Path | None) -> dict | None:
-    if path is None:
+def load_speaker_labels(path: Path | str | None) -> dict | None:
+    if path is None or str(path) == "":
         return None
-    with path.open("r", encoding="utf-8") as handle:
+    label_path = Path(path)
+    if not label_path.is_file():
+        raise FileNotFoundError(f"Speaker-label JSON does not exist: {label_path}")
+    with label_path.open("r", encoding="utf-8") as handle:
         labels = json.load(handle)
     if not isinstance(labels, dict):
-        raise ValueError(f"Expected speaker-label JSON object: {path}")
+        raise ValueError(f"Expected speaker-label JSON object: {label_path}")
+    print(f"speaker labels: {label_path} ({len(labels)} scenes)")
     return labels
 
 
