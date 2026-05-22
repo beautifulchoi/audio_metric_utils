@@ -44,7 +44,7 @@ DEFAULT_SPEAKER_LABELS_JSON = Path(
     "/home/prj/data/EgoCom-Dataset/egocom_dataset/speaker_labels/rev_ground_truth_speaker_labels.json"
 )
 DEFAULT_OUTPUT_ROOT = None
-DEFAULT_VIDEO_SCALE = None
+DEFAULT_VIDEO_SCALE = "1280:-2"
 DEFAULT_OUTPUT_EXT = ".mp4"
 LABEL_BIN_MS = 500
 
@@ -174,24 +174,24 @@ def parse_args() -> argparse.Namespace:
         "--video-scale",
         default=DEFAULT_VIDEO_SCALE,
         help=(
-            "Optional ffmpeg scale size for pred media, for example 1280:-2 "
-            "or 1280x960. Defaults to copying the original video stream."
+            "ffmpeg scale size for the camera panel in side-by-side output, "
+            "for example 1280:-2 or 1280x960."
         ),
     )
     parser.add_argument(
         "--video-codec",
         default="libx264",
-        help="ffmpeg video codec when --video-scale requests re-encoding.",
+        help="ffmpeg video codec for side-by-side composite output.",
     )
     parser.add_argument(
         "--video-crf",
         default="18",
-        help="x264/x265 CRF when --video-scale requests re-encoding.",
+        help="x264/x265 CRF for side-by-side composite output.",
     )
     parser.add_argument(
         "--video-preset",
         default="medium",
-        help="ffmpeg video preset when --video-scale requests re-encoding.",
+        help="ffmpeg video preset for side-by-side composite output.",
     )
     parser.add_argument(
         "--speaker-labels-json",
@@ -809,12 +809,20 @@ def downsample_waveform_for_plot(
     return times.numpy(), audio[:, indices].numpy()
 
 
-def plot_waveform_axis(axis, audio: torch.Tensor, sample_rate: int, duration: float) -> None:
+def plot_waveform_axis(
+    axis,
+    audio: torch.Tensor,
+    sample_rate: int,
+    duration: float,
+    title: str,
+    limit: float | None = None,
+) -> None:
     times, audio_plot = downsample_waveform_for_plot(audio, sample_rate)
-    limit = max(float(torch.abs(audio).max().item()), 1e-3) * 1.05
+    if limit is None:
+        limit = max(float(torch.abs(audio).max().item()), 1e-3) * 1.05
     axis.plot(times, audio_plot[0], linewidth=0.6, alpha=0.85, label="L")
     axis.plot(times, audio_plot[1], linewidth=0.6, alpha=0.6, label="R")
-    axis.set_title("Waveform")
+    axis.set_title(title)
     axis.set_ylabel("Amp")
     axis.set_xlim(0.0, duration)
     axis.set_ylim(-limit, limit)
@@ -882,8 +890,7 @@ def save_stream_plot_media(
     *,
     media_path: Path,
     media_kind: str,
-    audio: torch.Tensor,
-    sample_rate: int,
+    audio_by_kind: dict[str, tuple[torch.Tensor, int]],
     row: dict,
     dominant_speaker_ids: torch.Tensor,
     fps: int,
@@ -901,14 +908,39 @@ def save_stream_plot_media(
     if not animation.writers.is_available("ffmpeg"):
         raise RuntimeError("Animated plot media requires the Matplotlib ffmpeg writer")
 
-    duration = audio_duration(audio, sample_rate)
+    ordered = [
+        ("source", "Source"),
+        ("target", "Target"),
+        ("pred", "Predicted"),
+    ]
+    missing = [kind for kind, _ in ordered if kind not in audio_by_kind]
+    if missing:
+        raise ValueError(f"Missing audio for comparison plot: {', '.join(missing)}")
+
+    duration = max(
+        audio_duration(audio, sample_rate)
+        for audio, sample_rate in audio_by_kind.values()
+    )
+    waveform_limit = max(
+        max(float(torch.abs(audio).max().item()), 1e-3)
+        for audio, _ in audio_by_kind.values()
+    ) * 1.05
+
     media_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(
+    fig = plt.figure(figsize=(12.8, 8.4), constrained_layout=True)
+    grid = fig.add_gridspec(
         4,
-        1,
-        figsize=(12.8, 8.4),
-        gridspec_kw={"height_ratios": [0.65, 1.0, 1.15, 1.15]},
-        constrained_layout=True,
+        3,
+        height_ratios=[0.58, 1.0, 1.0, 1.0],
+        width_ratios=[1.45, 1.0, 1.0],
+    )
+    label_axis = fig.add_subplot(grid[0, :])
+    axes = np.asarray(
+        [
+            [fig.add_subplot(grid[row_index + 1, col_index]) for col_index in range(3)]
+            for row_index in range(3)
+        ],
+        dtype=object,
     )
     clip_key = {
         "source": "src_clip_filename",
@@ -922,17 +954,45 @@ def save_stream_plot_media(
         fontsize=11,
     )
 
-    plot_label_axis(axes[0], dominant_speaker_ids, duration)
-    plot_waveform_axis(axes[1], audio, sample_rate, duration)
-    image = plot_spectrogram_axis(axes[2], audio[0], sample_rate, "Spectrogram (L)", duration)
-    plot_spectrogram_axis(axes[3], audio[1], sample_rate, "Spectrogram (R)", duration)
-    axes[-1].set_xlabel("Time (s)")
-    colorbar = fig.colorbar(image, ax=axes[2:], shrink=0.94)
-    colorbar.set_label("dB")
+    plot_label_axis(label_axis, dominant_speaker_ids, duration)
+    spec_axes = []
+    last_image = None
+    for row_index, (kind, label) in enumerate(ordered):
+        audio, sample_rate = audio_by_kind[kind]
+        plot_waveform_axis(
+            axes[row_index, 0],
+            audio,
+            sample_rate,
+            duration,
+            f"{label} Waveform",
+            waveform_limit,
+        )
+        left_image = plot_spectrogram_axis(
+            axes[row_index, 1],
+            audio[0],
+            sample_rate,
+            f"{label} Spectrogram (L)",
+            duration,
+        )
+        plot_spectrogram_axis(
+            axes[row_index, 2],
+            audio[1],
+            sample_rate,
+            f"{label} Spectrogram (R)",
+            duration,
+        )
+        last_image = left_image
+        spec_axes.extend([axes[row_index, 1], axes[row_index, 2]])
+
+    for col_index in range(3):
+        axes[-1, col_index].set_xlabel("Time (s)")
+    if last_image is not None:
+        colorbar = fig.colorbar(last_image, ax=spec_axes, shrink=0.96, pad=0.01)
+        colorbar.set_label("dB")
 
     bars = []
-    for axis in axes:
-        if axis in (axes[2], axes[3]):
+    for axis in [label_axis, *axes.reshape(-1).tolist()]:
+        if axis in spec_axes:
             bars.append(axis.axvline(0.0, color="black", linewidth=3.0, alpha=0.75))
             bars.append(axis.axvline(0.0, color="white", linewidth=1.5, alpha=1.0))
         else:
@@ -1048,6 +1108,7 @@ def make_composite_media(
     output_path: Path,
     speaker_labels: dict | None,
     pred_audio_path: Path | None,
+    comparison_audio_paths: dict[str, Path],
 ) -> tuple[bool, bool]:
     if output_path.exists() and not args.overwrite:
         print(f"SKIP exists: {output_path}", file=sys.stderr)
@@ -1059,16 +1120,22 @@ def make_composite_media(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        audio, sample_rate = load_stereo_audio(plot_audio_path)
-        duration = audio_duration(audio, sample_rate)
+        audio_by_kind = {
+            kind: load_stereo_audio(path)
+            for kind, path in comparison_audio_paths.items()
+        }
+        selected_audio, selected_sample_rate = load_stereo_audio(plot_audio_path)
+        duration = max(
+            [audio_duration(selected_audio, selected_sample_rate)]
+            + [audio_duration(audio, sample_rate) for audio, sample_rate in audio_by_kind.values()]
+        )
         dominant_speaker_ids = dominant_speaker_ids_for_plot(row, speaker_labels, duration)
         with tempfile.TemporaryDirectory(prefix="make_pred_media_") as temp_dir:
             temp_plot_path = Path(temp_dir) / f"{media_kind}_plot.mp4"
             save_stream_plot_media(
                 media_path=temp_plot_path,
                 media_kind=media_kind,
-                audio=audio,
-                sample_rate=sample_rate,
+                audio_by_kind=audio_by_kind,
                 row=row,
                 dominant_speaker_ids=dominant_speaker_ids,
                 fps=args.plot_fps,
@@ -1131,7 +1198,7 @@ def main() -> int:
         raise FileNotFoundError(f"Audio root does not exist: {audio_root}")
     if not plot_root.is_dir():
         print(
-            f"WARN plot root does not exist; generated pred media will not use plots: {plot_root}",
+            f"WARN plot root does not exist; animated plot panels will be generated from audio: {plot_root}",
             file=sys.stderr,
         )
 
@@ -1181,12 +1248,33 @@ def main() -> int:
                 skipped += 1
                 sample_failed = args.strict
 
-        if make_pred and tgt_video_path is not None:
-            ok, did_fail = mux_media(
+        src_audio_path = summary_audio_path(row, sample_dir, "source", args.audio_name)
+        if src_audio_path is None:
+            print(f"SKIP missing source audio for {sample_dir.name}", file=sys.stderr)
+            skipped += 1
+            sample_failed = args.strict
+
+        tgt_audio_path = summary_audio_path(row, sample_dir, "target", args.audio_name)
+        if tgt_audio_path is None:
+            print(f"SKIP missing target audio for {sample_dir.name}", file=sys.stderr)
+            skipped += 1
+            sample_failed = args.strict
+
+        comparison_audio_paths = None
+        if src_audio_path is not None and tgt_audio_path is not None:
+            comparison_audio_paths = {
+                "source": src_audio_path,
+                "target": tgt_audio_path,
+                "pred": pred_audio_path,
+            }
+
+        if make_pred and tgt_video_path is not None and comparison_audio_paths is not None:
+            ok, did_fail = make_composite_media(
                 args=args,
                 media_kind="pred",
-                video_path=tgt_video_path,
-                audio_path=pred_audio_path,
+                row=row,
+                camera_video_path=tgt_video_path,
+                plot_audio_path=pred_audio_path,
                 output_path=media_output_path(
                     output_root,
                     "pred",
@@ -1195,17 +1283,26 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
-                audio_flipped=args.audio_flipped,
+                speaker_labels=speaker_labels,
+                pred_audio_path=pred_audio_path,
+                comparison_audio_paths=comparison_audio_paths,
             )
             outputs_done += int(ok)
             failed += int(did_fail)
             sample_failed = sample_failed or did_fail
 
-        if make_target and tgt_video_path is not None:
-            ok, did_fail = copy_original_media(
+        if (
+            make_target
+            and tgt_video_path is not None
+            and tgt_audio_path is not None
+            and comparison_audio_paths is not None
+        ):
+            ok, did_fail = make_composite_media(
                 args=args,
                 media_kind="target",
-                video_path=tgt_video_path,
+                row=row,
+                camera_video_path=tgt_video_path,
+                plot_audio_path=tgt_audio_path,
                 output_path=media_output_path(
                     output_root,
                     "target",
@@ -1214,16 +1311,26 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
+                speaker_labels=speaker_labels,
+                pred_audio_path=None,
+                comparison_audio_paths=comparison_audio_paths,
             )
             outputs_done += int(ok)
             failed += int(did_fail)
             sample_failed = sample_failed or did_fail
 
-        if make_source and src_video_path is not None:
-            ok, did_fail = copy_original_media(
+        if (
+            make_source
+            and src_video_path is not None
+            and src_audio_path is not None
+            and comparison_audio_paths is not None
+        ):
+            ok, did_fail = make_composite_media(
                 args=args,
                 media_kind="source",
-                video_path=src_video_path,
+                row=row,
+                camera_video_path=src_video_path,
+                plot_audio_path=src_audio_path,
                 output_path=media_output_path(
                     output_root,
                     "source",
@@ -1232,6 +1339,9 @@ def main() -> int:
                     sample_dir=sample_dir,
                     output_layout=args.output_layout,
                 ),
+                speaker_labels=speaker_labels,
+                pred_audio_path=None,
+                comparison_audio_paths=comparison_audio_paths,
             )
             outputs_done += int(ok)
             failed += int(did_fail)

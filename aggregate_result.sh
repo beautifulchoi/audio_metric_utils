@@ -4,10 +4,10 @@ set -euo pipefail
 # Edit this list, or pass output roots / metrics CSV files as CLI args:
 #   /home/prj/aggregate_result.sh /path/to/project_a/inference_result /path/to/project_b/metrics_aggregate.csv
 OUTPUT_ROOTS=(
-    /home/prj/ego2ego_mag/result/inference-geo-label/metrics_aggregated_aggregate.csv
-    /home/prj/ego2ego_mag/result/inference-text/metrics_aggregated_aggregate.csv
-    /home/prj/ego2ego_mag/result/inference-vision/metrics_aggregated_aggregate.csv
-    /home/prj/comparision_baselines_new/DAVIS/inference_result/egocom-vision-fm/metrics_aggregated_aggregate.csv
+    /home/prj/ego2ego_mag/result_10s/infer_results_10s/geo-label/metrics_aggregated_aggregate.csv
+    /home/prj/ego2ego_mag/result_10s/infer_results_10s/text/metrics_aggregated_aggregate.csv
+    /home/prj/ego2ego_mag/result_10s/infer_results_10s/vision/metrics_aggregated_aggregate.csv
+    /home/prj/comparision_baselines_new/DAVIS/inference_result/egocom-vision-fm-10s/metrics_aggregated_aggregate.csv
 
 
 )

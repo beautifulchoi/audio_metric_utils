@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>make_pred_media Implementation Report</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --ink: #18202a;
+      --muted: #5a6472;
+      --line: #d7dce3;
+      --panel: #ffffff;
+      --blue: #2563eb;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --violet: #6d28d9;
+      --cyan: #0891b2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header { background: #111827; color: #fff; padding: 28px 36px; }
+    header h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    header p { margin: 0; color: #d1d5db; max-width: 980px; }
+    nav {
+      display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 36px;
+      background: #fff; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10;
+    }
+    nav a {
+      color: var(--blue); text-decoration: none; border: 1px solid #bfdbfe;
+      padding: 6px 10px; border-radius: 6px; background: #eff6ff; font-weight: 600;
+    }
+    main { padding: 28px 36px 48px; max-width: 1180px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 22px; margin: 0 0 22px; }
+    h2 { margin: 0 0 14px; font-size: 21px; }
+    h3 { margin: 18px 0 8px; font-size: 16px; }
+    p { margin: 0 0 10px; }
+    code { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+    pre { margin: 10px 0 0; padding: 12px; background: #0f172a; color: #e5e7eb; border-radius: 8px; overflow: auto; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; }
+    th { background: #f8fafc; }
+    ul { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 5px 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fbfdff; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; }
+    .done { color: #064e3b; background: #d1fae5; border: 1px solid #a7f3d0; }
+    .changed { color: #1e3a8a; background: #dbeafe; border: 1px solid #bfdbfe; }
+    .note { color: #78350f; background: #fef3c7; border: 1px solid #fde68a; }
+    .risk-low { color: #166534; font-weight: 700; }
+    .risk-med { color: #92400e; font-weight: 700; }
+    .risk-high { color: #991b1b; font-weight: 700; }
+    .timeline { border-left: 3px solid var(--blue); padding-left: 18px; }
+    .event { position: relative; margin: 0 0 18px; }
+    .event:before { content: ""; position: absolute; left: -27px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--blue); border: 3px solid #fff; box-shadow: 0 0 0 1px var(--blue); }
+    .diagram-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #fcfcfd; padding: 16px; }
+    svg { max-width: 100%; height: auto; display: block; }
+    .node { fill: #fff; stroke: #94a3b8; stroke-width: 1.4; }
+    .node-blue { fill: #eff6ff; stroke: #2563eb; }
+    .node-green { fill: #ecfdf5; stroke: #16a34a; }
+    .node-amber { fill: #fffbeb; stroke: #d97706; }
+    .node-violet { fill: #f5f3ff; stroke: #7c3aed; }
+    .node-cyan { fill: #ecfeff; stroke: #0891b2; }
+    .arrow { stroke: #475569; stroke-width: 1.8; marker-end: url(#arrow); fill: none; }
+    .label { font: 13px system-ui, sans-serif; fill: #111827; font-weight: 700; }
+    .small { font: 11px system-ui, sans-serif; fill: #475569; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } main, nav, header { padding-left: 18px; padding-right: 18px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>make_pred_media Implementation Report</h1>
+    <p>Project-local report for the <code>/home/prj/comp_utils</code> changes. The generator now uses inference <code>summary.json</code>, resolves trimmed videos from the new holdout data root, and writes camera + moving comparison-plot composites.</p>
+  </header>
+
+  <nav>
+    <a href="#summary">Summary</a>
+    <a href="#files">Files</a>
+    <a href="#pipeline">Pipeline Diagram</a>
+    <a href="#progress">Progress</a>
+    <a href="#behavior">Behavior</a>
+    <a href="#validation">Validation</a>
+    <a href="#risks">Risks</a>
+  </nav>
+
+  <main>
+    <section id="summary">
+      <h2>Summary</h2>
+      <p><span class="badge done">Implemented</span> Each sample is mapped through <code>&lt;infer-root&gt;/summary.json</code> first. Source and target camera clips are resolved from <code>/home/prj/data/egocom_holdout/4s_overlap0_v2_day1_con4_parts/test/video</code>.</p>
+      <p><span class="badge changed">Latest change</span> The animated side plot is no longer a single-audio plot. Every <code>pred</code>, <code>target</code>, and <code>source</code> output now shows Source, Target, and Predicted waveform rows together, with L/R spectrograms and a moving time bar across all rows.</p>
+      <p><span class="badge note">Audio flip</span> The wrapper defaults to no audio flip because the new data is already flipped. Callers can still opt in with <code>AUDIO_FLIPPED_ARGS=--audio-flipped</code> for old data.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Inputs</h3>
+          <ul>
+            <li><code>summary.json</code> is the primary manifest.</li>
+            <li><code>src_audio.wav</code>, <code>tgt_audio.wav</code>, and <code>pred_audio.wav</code> are loaded for every plot panel.</li>
+            <li>Source and target videos come from the new data-root <code>video/</code> directory.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Outputs</h3>
+          <ul>
+            <li>Default output root is <code>&lt;infer-root&gt;/pred_media</code>.</li>
+            <li>Sample layout writes <code>pred.mp4</code>, <code>target.mp4</code>, and <code>source.mp4</code>.</li>
+            <li>Each MP4 is camera video stacked beside the moving all-audio comparison plot.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="files">
+      <h2>Files Changed</h2>
+      <table>
+        <thead><tr><th>File</th><th>Purpose</th><th>Key Changes</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>/home/prj/comp_utils/make_pred_media.py</code></td>
+            <td>Main media-generation script.</td>
+            <td>Summary-first sample resolution, new holdout data defaults, composite generation for <code>pred</code>/<code>target</code>/<code>source</code>, all-audio comparison plots, moving time bars across label/waveform/spectrogram axes, and no pred-audio channel flip unless requested.</td>
+          </tr>
+          <tr>
+            <td><code>/home/prj/comp_utils/make_pred_media.sh</code></td>
+            <td>Convenience wrapper.</td>
+            <td>Uses the new default inference/data roots, leaves <code>AUDIO_FLIPPED_ARGS</code> empty by default, and exposes <code>FPS</code>, <code>PLOT_FPS</code>, <code>OUTPUT_FPS</code>, <code>PLOT_DPI</code>, and <code>VIDEO_SCALE</code> environment controls.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="pipeline">
+      <h2>Pipeline Diagram</h2>
+      <div class="diagram-wrap">
+        <svg viewBox="0 0 1120 560" role="img" aria-label="make_pred_media pipeline diagram">
+          <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#475569" /></marker></defs>
+          <rect class="node node-blue" x="30" y="38" width="220" height="76" rx="8" />
+          <text class="label" x="48" y="70">Inference summary</text><text class="small" x="48" y="94">&lt;infer-root&gt;/summary.json</text>
+          <rect class="node node-cyan" x="30" y="166" width="220" height="112" rx="8" />
+          <text class="label" x="48" y="198">Audio sample folder</text><text class="small" x="48" y="222">src_audio.wav</text><text class="small" x="48" y="242">tgt_audio.wav</text><text class="small" x="48" y="262">pred_audio.wav</text>
+          <rect class="node node-green" x="30" y="350" width="220" height="88" rx="8" />
+          <text class="label" x="48" y="382">Dataset videos</text><text class="small" x="48" y="406">data-root/video/&lt;video&gt;</text><text class="small" x="48" y="424">trimmed 4s MP4 clips</text>
+          <rect class="node node-violet" x="330" y="88" width="250" height="116" rx="8" />
+          <text class="label" x="350" y="120">Resolve sample</text><text class="small" x="350" y="144">summary path first</text><text class="small" x="350" y="164">fallback: video_name + clip stem</text><text class="small" x="350" y="184">legacy JSONL only if no summary</text>
+          <rect class="node node-amber" x="330" y="286" width="250" height="142" rx="8" />
+          <text class="label" x="350" y="318">Generate comparison plot</text><text class="small" x="350" y="342">label cue row</text><text class="small" x="350" y="362">Source waveform + L/R spectrogram</text><text class="small" x="350" y="382">Target waveform + L/R spectrogram</text><text class="small" x="350" y="402">Predicted waveform + L/R spectrogram</text><text class="small" x="350" y="422">moving vertical bars over time</text>
+          <rect class="node node-blue" x="680" y="126" width="280" height="136" rx="8" />
+          <text class="label" x="700" y="158">Side-by-side ffmpeg composite</text><text class="small" x="700" y="184">scale camera to 1280:-2</text><text class="small" x="700" y="204">scale plot to camera height</text><text class="small" x="700" y="224">hstack camera + moving plot</text><text class="small" x="700" y="244">mux selected output audio</text>
+          <rect class="node node-green" x="680" y="350" width="280" height="108" rx="8" />
+          <text class="label" x="700" y="382">Sample output folder</text><text class="small" x="700" y="408">pred.mp4: target camera + pred audio</text><text class="small" x="700" y="428">target.mp4 / source.mp4: original audio</text><text class="small" x="700" y="448">all include 3-row comparison plot</text>
+          <path class="arrow" d="M250 76 C292 76 292 126 330 136" />
+          <path class="arrow" d="M250 222 C292 222 292 166 330 156" />
+          <path class="arrow" d="M250 394 C292 394 294 204 330 184" />
+          <path class="arrow" d="M580 148 C625 148 636 182 680 194" />
+          <path class="arrow" d="M580 356 C626 356 636 250 680 228" />
+          <path class="arrow" d="M820 262 L820 350" />
+        </svg>
+      </div>
+    </section>
+
+    <section id="progress">
+      <h2>Progress Details</h2>
+      <div class="timeline">
+        <div class="event"><h3>1. Inspected old reference outputs</h3><p>Checked prior <code>pred_media_samples</code> and <code>plot_media_summary.json</code>. The reference output shape was side-by-side camera plus animated plot media.</p></div>
+        <div class="event"><h3>2. Switched to summary-driven mapping</h3><p>Added logic to read <code>summary.json</code> first, resolve explicit paths when present, and fall back only for older inference folders.</p></div>
+        <div class="event"><h3>3. Restored composite media</h3><p>Changed output generation from camera-only muxing to <code>make_composite_media</code>, which renders a temporary plot video and stacks it beside the camera clip.</p></div>
+        <div class="event"><h3>4. Added all-audio plot panels</h3><p>Updated the plot renderer so every output loads source, target, and pred audio together. The animated plot now contains three waveform rows and paired L/R spectrograms instead of only the selected output's waveform.</p></div>
+        <div class="event"><h3>5. Updated wrapper defaults</h3><p>The wrapper now defaults to no audio flip and exposes rendering controls for plot FPS, output FPS, DPI, and camera scale.</p></div>
+        <div class="event"><h3>6. Saved smoke output under the project</h3><p>Ran one-sample validation into <code>/home/prj/comp_utils/make_pred_media_smoke_all_waveforms</code>.</p></div>
+      </div>
+    </section>
+
+    <section id="behavior">
+      <h2>Current Behavior</h2>
+      <table>
+        <thead><tr><th>Media Kind</th><th>Camera Video</th><th>Plot Content</th><th>Output Audio</th><th>Output Layout</th></tr></thead>
+        <tbody>
+          <tr><td><code>pred</code></td><td>Target trimmed MP4</td><td>Source + Target + Predicted waveform/spectrogram rows</td><td><code>pred_audio.wav</code></td><td>Camera + animated comparison plot</td></tr>
+          <tr><td><code>target</code></td><td>Target trimmed MP4</td><td>Source + Target + Predicted waveform/spectrogram rows</td><td>Original target camera audio</td><td>Camera + animated comparison plot</td></tr>
+          <tr><td><code>source</code></td><td>Source trimmed MP4</td><td>Source + Target + Predicted waveform/spectrogram rows</td><td>Original source camera audio</td><td>Camera + animated comparison plot</td></tr>
+        </tbody>
+      </table>
+      <h3>Command Shape</h3>
+      <pre>INFER_ROOT=/home/prj/ego2ego_mag/result/inference-geo-label \
+/home/prj/comp_utils/make_pred_media.sh --overwrite</pre>
+      <p class="note"><span class="badge note">Note</span> Existing camera-only or old single-waveform outputs must be regenerated with <code>--overwrite</code>.</p>
+    </section>
+
+    <section id="validation">
+      <h2>Validation</h2>
+      <table>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Python syntax check</td><td><span class="badge done">Passed</span> <code>python -m py_compile comp_utils/make_pred_media.py</code></td></tr>
+          <tr><td>Shell syntax check</td><td><span class="badge done">Passed</span> <code>bash -n comp_utils/make_pred_media.sh</code></td></tr>
+          <tr><td>One-sample smoke test location</td><td><code>/home/prj/comp_utils/make_pred_media_smoke_all_waveforms/sample_0000_day_1__con_4__part1</code></td></tr>
+          <tr><td>Generated files</td><td><code>pred.mp4</code>, <code>target.mp4</code>, <code>source.mp4</code></td></tr>
+          <tr><td>Probe result for all three files</td><td><code>2560x960</code>, 4 seconds, H.264 video + AAC audio</td></tr>
+          <tr><td>Smoke frame</td><td><code>/home/prj/comp_utils/make_pred_media_smoke_all_waveforms/pred_frame_1s.jpg</code> was extracted for inspection; the local image viewer was blocked by the sandbox namespace issue.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="risks">
+      <h2>Risks And Notes</h2>
+      <table>
+        <thead><tr><th>Severity</th><th>Item</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td class="risk-med">Medium</td><td>Rendering the all-audio comparison panel is slower than camera-only muxing or a single waveform plot.</td><td>Use <code>--limit</code> for smoke tests. Tune <code>PLOT_FPS</code>, <code>OUTPUT_FPS</code>, and <code>PLOT_DPI</code> in the wrapper environment for larger runs.</td></tr>
+          <tr><td class="risk-med">Medium</td><td>Existing old outputs are skipped unless overwrite is enabled.</td><td>Run with <code>--overwrite</code> when regenerating prior <code>pred_media</code> folders.</td></tr>
+          <tr><td class="risk-low">Low</td><td>The all-audio plot requires source and target audio to be present for every sample.</td><td>The script resolves those paths from <code>summary.json</code> first and skips incomplete samples unless <code>--strict</code> is used.</td></tr>
+          <tr><td class="risk-low">Low</td><td>Older datasets may still require predicted audio channel flipping.</td><td>The wrapper defaults to no flip for the new data, but callers can opt in with <code>AUDIO_FLIPPED_ARGS=--audio-flipped</code>.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
