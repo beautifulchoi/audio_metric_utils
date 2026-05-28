@@ -3,6 +3,7 @@
 import numpy as np
 import torch as th
 import torchaudio as ta
+from scipy.signal import hilbert
 
 
 class FourierTransform:
@@ -167,6 +168,33 @@ class L2Loss(Loss):
         :return: a scalar loss value
         '''
         return th.mean((data - target).pow(2))
+
+
+class EnvelopeDistance(Loss):
+    def _loss(self, data, target):
+        '''
+        :param data: predicted wave signals in a channels x T or B x channels x T tensor
+        :param target: target wave signals in a channels x T or B x channels x T tensor
+        :return: summed RMS Hilbert-envelope distance across channels
+        '''
+        data_np = self._channel_time_numpy(data)
+        target_np = self._channel_time_numpy(target)
+        channels = min(data_np.shape[0], target_np.shape[0])
+
+        envelope_distance = 0.0
+        for channel in range(channels):
+            pred_env = np.abs(hilbert(data_np[channel]))
+            target_env = np.abs(hilbert(target_np[channel]))
+            envelope_distance += float(np.sqrt(np.mean((target_env - pred_env) ** 2)))
+        return data.new_tensor(envelope_distance)
+
+    @staticmethod
+    def _channel_time_numpy(audio):
+        if audio.dim() == 1:
+            audio = audio.unsqueeze(0)
+        elif audio.dim() > 2:
+            audio = audio.reshape(-1, audio.shape[-1])
+        return audio.detach().cpu().numpy()
 
 
 class AmplitudeLoss(Loss):
