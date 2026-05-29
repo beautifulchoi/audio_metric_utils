@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Edit this list, or pass output roots / metrics CSV files as CLI args:
-#   /home/prj/aggregate_result.sh /path/to/project_a/inference_result /path/to/project_b/metrics_aggregate.csv
+# Edit this list, or pass output roots / metrics aggregate CSV files as CLI args:
+#   /home/prj/aggregate_result.sh /path/to/project_a/inference_result /path/to/project_b/metrics_aggregated_aggregate.csv
 OUTPUT_ROOTS=(
-    /home/prj/ego2ego_mag/result_10s/infer_results_10s/geo-label/metrics_aggregated_aggregate.csv
-    /home/prj/ego2ego_mag/result_10s/infer_results_10s/text/metrics_aggregated_aggregate.csv
-    /home/prj/ego2ego_mag/result_10s/infer_results_10s/vision/metrics_aggregated_aggregate.csv
-    /home/prj/comparision_baselines_new/DAVIS/inference_result/egocom-vision-fm-10s/metrics_aggregated_aggregate.csv
-
-
+    /home/prj/comparision_baselines_new/DAVIS/inference_result/egocom-vision-fm/metrics_aggregated_aggregate.csv
+/home/prj/ego2ego_ipd_masked/result/inference-metadata-vision-masked-clip-da3/metrics_aggregated_aggregate.csv
+/home/prj/ego2ego_ipd_masked/result/inference-metadata-vision-masked-clip/metrics_aggregated_aggregate.csv
 )
 
 OUT_CSV="${OUT_CSV:-/home/prj/metrics_mean_aggregate.csv}"
@@ -33,7 +30,21 @@ out_csv = Path(sys.argv[1]).expanduser()
 output_roots = [Path(arg).expanduser() for arg in sys.argv[2:]]
 
 rows = []
-metric_order = []
+DEFAULT_METRIC_ORDER = [
+    "waveform_l2",
+    "amplitude_l1",
+    "phase",
+    "envelope_distance",
+    "ipd_mae_x10000",
+    "ild_mae_x10000",
+    "mrstft",
+    "pesq",
+    "stoi",
+    "seg_snr",
+    "si_snr",
+    "si_sdr",
+]
+metric_order = list(DEFAULT_METRIC_ORDER)
 PROJECT_ROOT = Path("/home/prj")
 
 def format_decimal(value):
@@ -67,12 +78,17 @@ def resolve_metrics_path(input_path):
         print(f"Warning: not a CSV file, skipping: {input_path}", file=sys.stderr)
         return None, None, None
 
-    metrics_path = input_path / "metrics_aggregate.csv"
-    if metrics_path.is_file():
-        project_name = project_name_from_path(input_path)
-        return metrics_path, project_name, f"{project_name}/{input_path.name}"
+    candidates = (
+        input_path / "metrics_aggregated_aggregate.csv",
+        input_path / "metrics_aggregate.csv",
+    )
+    for metrics_path in candidates:
+        if metrics_path.is_file():
+            project_name = project_name_from_path(input_path)
+            return metrics_path, project_name, f"{project_name}/{input_path.name}"
 
-    print(f"Warning: missing metrics_aggregate.csv, skipping: {metrics_path}", file=sys.stderr)
+    candidate_names = ", ".join(path.name for path in candidates)
+    print(f"Warning: missing aggregate CSV ({candidate_names}), skipping: {input_path}", file=sys.stderr)
     return None, None, None
 
 entries = []

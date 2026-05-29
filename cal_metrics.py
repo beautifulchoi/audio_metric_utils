@@ -22,6 +22,7 @@ from auraloss.freq import MultiResolutionSTFTLoss as MRSTFT
 
 from comp_utils.metrics import AmplitudeLoss, EnvelopeDistance, L2Loss, PhaseLoss
 from comp_utils.speech_quality import SpeechQualityMetrics
+from comp_utils.spatial_utils import SpatialMetrics
 
 
 MID_METRIC_NAMES = {"waveform_l2", "amplitude_l1", "phase"}
@@ -176,6 +177,7 @@ def compute_rows(audio_root: Path, limit: int | None, pesq_max_seconds: float) -
             sample_rate=sample_rate,
             pesq_max_seconds=pesq_max_seconds,
         )
+        spatial_metrics = SpatialMetrics()
 
         row: dict[str, float | int | str | None] = {
             "scene": item_dir.name,
@@ -227,6 +229,14 @@ def compute_rows(audio_root: Path, limit: int | None, pesq_max_seconds: float) -
                     row[name] = None
             except Exception as exc:
                 print(f"[WARN] {item_dir.name} / {name} failed: {exc}", file=sys.stderr)
+                row[name] = None
+
+        try:
+            with torch.no_grad():
+                row.update(spatial_metrics.compute(pred, gt, sample_rate))
+        except Exception as exc:
+            print(f"[WARN] {item_dir.name} / spatial metrics failed: {exc}", file=sys.stderr)
+            for name in spatial_metrics.names:
                 row[name] = None
 
         rows.append(row)
